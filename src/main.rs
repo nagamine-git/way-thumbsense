@@ -1,102 +1,50 @@
 //! way-thumbsense - ThumbSense for Linux/Wayland
 //!
-//! タッチパッドに触れている間、J/Kキーをマウスクリックに変換
+//! タッチパッドに触れている間、仮想キー(F24)を押し続ける
+//! keydでF24をmousenavレイヤーのトリガーにすることでThumbSenseを実現
 
 use evdev::{InputEventKind, Key};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use way_thumbsense::core::{map_key_event, KeyCode, KeyEvent, OutputAction, TouchState};
-use way_thumbsense::input::{find_keyboard, find_touchpad};
-use way_thumbsense::output::VirtualMouse;
+use way_thumbsense::input::find_touchpad;
+use way_thumbsense::output::VirtualDevice;
 
 fn main() -> anyhow::Result<()> {
     println!("way-thumbsense starting...");
 
-    // デバイスを検出
+    // タッチパッドを検出
     let mut touchpad = find_touchpad()?;
-    let mut keyboard = find_keyboard()?;
-
     println!("Touchpad: {}", touchpad.name().unwrap_or("unknown"));
-    println!("Keyboard: {}", keyboard.name().unwrap_or("unknown"));
 
-    // 仮想マウスを作成
-    let mut virtual_mouse = VirtualMouse::new()?;
-    println!("Virtual mouse created");
-
-    // 共有のタッチ状態 (finger_count)
-    let finger_count = Arc::new(AtomicU8::new(0));
-    let finger_count_clone = Arc::clone(&finger_count);
-
-    // タッチパッド監視スレッド
-    thread::spawn(move || {
-        loop {
-            match touchpad.fetch_events() {
-                Ok(events) => {
-                    for ev in events {
-                        if let InputEventKind::Key(key) = ev.kind() {
-                            if key == Key::BTN_TOUCH {
-                                let count = if ev.value() == 1 { 1 } else { 0 };
-                                finger_count_clone.store(count, Ordering::SeqCst);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Touchpad error: {}", e);
-                    break;
-                }
-            }
-        }
-    });
+    // 仮想キーボードを作成
+    let mut vdev = VirtualDevice::new()?;
+    println!("Virtual keyboard created");
 
     println!("\nRunning... (Ctrl+C to exit)");
-    println!("Touch trackpad + press J (left click) or K (right click)\n");
+    println!("Touch trackpad to activate F24 (mousenav layer)\n");
 
-    // キーボード監視（メインスレッド）
+    let mut is_touching = false;
+
     loop {
-        match keyboard.fetch_events() {
+        match touchpad.fetch_events() {
             Ok(events) => {
                 for ev in events {
                     if let InputEventKind::Key(key) = ev.kind() {
-                        // J/Kキーのみ処理
-                        let key_code = match key {
-                            Key::KEY_J => Some(KeyCode::J),
-                            Key::KEY_K => Some(KeyCode::K),
-                            _ => None,
-                        };
+                        if key == Key::BTN_TOUCH {
+                            let now_touching = ev.value() == 1;
 
-                        if let Some(code) = key_code {
-                            // Press (1) または Release (0) のみ処理（Repeat (2) は無視）
-                            let key_event = match ev.value() {
-                                1 => Some(KeyEvent::Press(code)),
-                                0 => Some(KeyEvent::Release(code)),
-                                _ => None,
-                            };
+                            if now_touching != is_touching {
+                                is_touching = now_touching;
 
-                            if let Some(event) = key_event {
-                                let touch = TouchState {
-                                    finger_count: finger_count.load(Ordering::SeqCst),
-                                };
-
-                                let action = map_key_event(event, &touch);
-
-                                // デバッグ出力
-                                match &action {
-                                    OutputAction::MouseClick(btn) => {
-                                        println!("[ThumbSense] {:?} -> {:?} click", code, btn);
-                                    }
-                                    OutputAction::MouseRelease(btn) => {
-                                        println!("[ThumbSense] {:?} -> {:?} release", code, btn);
-                                    }
-                                    OutputAction::PassThrough(_) => {
-                                        // パススルーは何も表示しない
-                                    }
-                                }
-
-                                // アクションを実行
-                                if let Err(e) = virtual_mouse.execute(action) {
-                                    eprintln!("Virtual mouse error: {}", e);
+                                if is_touching {
+                                    // タッチ開始 → F24を押す
+                                    println!("[Touch] -> F24 press");
+                                    vdev.forward_key(Key::KEY_F24, 1)?;
+                                } else {
+                                    // タッチ終了 → F24を離す
+                                    println!("[Touch] -> F24 release");
+                                    vdev.forward_key(Key::KEY_F24, 0)?;
                                 }
                             }
                         }
@@ -104,7 +52,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             Err(e) => {
-                eprintln!("Keyboard error: {}", e);
+                eprintln!("Touchpad error: {}", e);
                 break;
             }
         }
