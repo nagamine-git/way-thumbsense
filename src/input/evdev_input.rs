@@ -1,12 +1,32 @@
 //! evdevデバイスの検出と読み取り
 
-use evdev::{Device, EventType, Key};
+use evdev::{AbsoluteAxisType, Device, EventType, Key};
 use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceType {
     Touchpad,
     Keyboard,
+}
+
+/// タッチパッドの寸法情報
+#[derive(Debug, Clone, Copy)]
+pub struct TouchpadDimensions {
+    pub max_x: i32,
+    pub max_y: i32,
+}
+
+/// タッチパッドの最大座標値を取得
+pub fn get_touchpad_dimensions(device: &Device) -> Option<TouchpadDimensions> {
+    let abs_state = device.get_abs_state().ok()?;
+
+    let x_info = abs_state.get(AbsoluteAxisType::ABS_X.0 as usize)?;
+    let y_info = abs_state.get(AbsoluteAxisType::ABS_Y.0 as usize)?;
+
+    Some(TouchpadDimensions {
+        max_x: x_info.maximum,
+        max_y: y_info.maximum,
+    })
 }
 
 /// デバイス名の一部を指定してデバイスを検索
