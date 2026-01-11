@@ -12,11 +12,25 @@ pub enum DeviceType {
 /// タッチパッドの寸法情報
 #[derive(Debug, Clone, Copy)]
 pub struct TouchpadDimensions {
+    pub min_x: i32,
     pub max_x: i32,
+    pub min_y: i32,
     pub max_y: i32,
 }
 
-/// タッチパッドの最大座標値を取得
+impl TouchpadDimensions {
+    /// X座標の範囲幅
+    pub fn width(&self) -> i32 {
+        self.max_x - self.min_x
+    }
+
+    /// Y座標の範囲幅
+    pub fn height(&self) -> i32 {
+        self.max_y - self.min_y
+    }
+}
+
+/// タッチパッドの座標範囲を取得
 pub fn get_touchpad_dimensions(device: &Device) -> Option<TouchpadDimensions> {
     let abs_state = device.get_abs_state().ok()?;
 
@@ -24,7 +38,9 @@ pub fn get_touchpad_dimensions(device: &Device) -> Option<TouchpadDimensions> {
     let y_info = abs_state.get(AbsoluteAxisType::ABS_Y.0 as usize)?;
 
     Some(TouchpadDimensions {
+        min_x: x_info.minimum,
         max_x: x_info.maximum,
+        min_y: y_info.minimum,
         max_y: y_info.maximum,
     })
 }
@@ -64,10 +80,29 @@ pub fn find_touchpad() -> Result<Device, FindDeviceError> {
         }
 
         if let Ok(device) = Device::open(&path) {
-            if let Some(keys) = device.supported_keys() {
-                if keys.contains(Key::BTN_TOUCH) {
-                    return Ok(device);
+            // 自分自身の仮想デバイスを除外
+            if let Some(name) = device.name() {
+                if name.contains("way-thumbsense") {
+                    continue;
                 }
+            }
+
+            // BTN_TOUCHとABS_X/ABS_Yを持つデバイスのみ（実際のタッチパッド）
+            let has_btn_touch = device
+                .supported_keys()
+                .map(|keys| keys.contains(Key::BTN_TOUCH))
+                .unwrap_or(false);
+
+            let has_abs_axes = device
+                .supported_absolute_axes()
+                .map(|axes| {
+                    axes.contains(AbsoluteAxisType::ABS_X)
+                        && axes.contains(AbsoluteAxisType::ABS_Y)
+                })
+                .unwrap_or(false);
+
+            if has_btn_touch && has_abs_axes {
+                return Ok(device);
             }
         }
     }

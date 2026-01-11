@@ -47,8 +47,8 @@ fn main() -> anyhow::Result<()> {
     let dimensions = get_touchpad_dimensions(&touchpad)
         .ok_or_else(|| anyhow::anyhow!("Failed to get touchpad dimensions"))?;
     println!(
-        "Touchpad dimensions: {} x {}",
-        dimensions.max_x, dimensions.max_y
+        "Touchpad dimensions: X({} to {}), Y({} to {})",
+        dimensions.min_x, dimensions.max_x, dimensions.min_y, dimensions.max_y
     );
 
     // 除外領域の設定

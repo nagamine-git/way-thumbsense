@@ -71,13 +71,15 @@ impl TouchTracker {
             return false;
         };
 
-        // 各端からの距離を計算
-        let left_threshold = (self.dimensions.max_x as f32 * self.exclusion_zones.left / 100.0) as i32;
-        let right_threshold =
-            (self.dimensions.max_x as f32 * (100.0 - self.exclusion_zones.right) / 100.0) as i32;
-        let top_threshold = (self.dimensions.max_y as f32 * self.exclusion_zones.top / 100.0) as i32;
-        let bottom_threshold =
-            (self.dimensions.max_y as f32 * (100.0 - self.exclusion_zones.bottom) / 100.0) as i32;
+        // min_x/min_y から max_x/max_y の範囲を使用
+        let width = self.dimensions.width() as f32;
+        let height = self.dimensions.height() as f32;
+
+        // 各端からの閾値を計算（min_x/min_yを基準に）
+        let left_threshold = self.dimensions.min_x + (width * self.exclusion_zones.left / 100.0) as i32;
+        let right_threshold = self.dimensions.min_x + (width * (100.0 - self.exclusion_zones.right) / 100.0) as i32;
+        let top_threshold = self.dimensions.min_y + (height * self.exclusion_zones.top / 100.0) as i32;
+        let bottom_threshold = self.dimensions.min_y + (height * (100.0 - self.exclusion_zones.bottom) / 100.0) as i32;
 
         // 除外領域内かどうか判定
         x < left_threshold || x > right_threshold || y < top_threshold || y > bottom_threshold
@@ -108,7 +110,9 @@ mod tests {
     #[test]
     fn test_no_exclusion() {
         let dims = TouchpadDimensions {
+            min_x: 0,
             max_x: 1000,
+            min_y: 0,
             max_y: 1000,
         };
         let mut tracker = TouchTracker::new(dims, ExclusionZones::none());
@@ -125,7 +129,9 @@ mod tests {
     #[test]
     fn test_with_exclusion() {
         let dims = TouchpadDimensions {
+            min_x: 0,
             max_x: 1000,
+            min_y: 0,
             max_y: 1000,
         };
         // 各端から10%を除外
@@ -155,6 +161,35 @@ mod tests {
         // 下端は除外される (y > 900)
         tracker.update_x(500);
         tracker.update_y(950);
+        assert!(tracker.is_in_exclusion_zone());
+    }
+
+    #[test]
+    fn test_with_negative_origin() {
+        // Magic Trackpadのような負の座標を持つデバイス
+        let dims = TouchpadDimensions {
+            min_x: -2000,
+            max_x: 2000,
+            min_y: -2000,
+            max_y: 0,
+        };
+        // 左右10%を除外
+        let zones = ExclusionZones::new(0.0, 0.0, 10.0, 10.0);
+        let mut tracker = TouchTracker::new(dims, zones);
+
+        // 中央は除外されない
+        tracker.update_x(0);
+        tracker.update_y(-1000);
+        assert!(!tracker.is_in_exclusion_zone());
+
+        // 左端は除外される (x < -1600)
+        tracker.update_x(-1800);
+        tracker.update_y(-1000);
+        assert!(tracker.is_in_exclusion_zone());
+
+        // 右端は除外される (x > 1600)
+        tracker.update_x(1800);
+        tracker.update_y(-1000);
         assert!(tracker.is_in_exclusion_zone());
     }
 }
