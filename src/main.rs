@@ -7,7 +7,7 @@ use clap::Parser;
 use evdev::{AbsoluteAxisType, InputEventKind, Key};
 use std::thread;
 use std::time::Duration;
-use way_thumbsense::input::{find_touchpad, get_touchpad_dimensions};
+use way_thumbsense::input::{find_touchpad_with_name, get_touchpad_dimensions};
 use way_thumbsense::output::VirtualDevice;
 use way_thumbsense::tracker::{ExclusionZones, TouchTracker};
 
@@ -42,8 +42,9 @@ fn main() -> anyhow::Result<()> {
     println!("way-thumbsense starting...");
 
     // タッチパッドを検出（見つからなければリトライ）
-    let mut touchpad = wait_for_touchpad();
-    println!("Touchpad: {}", touchpad.name().unwrap_or("unknown"));
+    let (mut touchpad, mut touchpad_path) = wait_for_touchpad(None);
+    let touchpad_name: String = touchpad.name().unwrap_or("unknown").to_string();
+    println!("Touchpad: {} ({})", touchpad_name, touchpad_path);
 
     // タッチパッドの寸法を取得
     let mut dimensions = get_touchpad_dimensions(&touchpad)
@@ -168,9 +169,18 @@ fn main() -> anyhow::Result<()> {
                 is_touching = false;
                 tracker.reset();
 
-                // タッチパッドの再接続を待つ
-                touchpad = wait_for_touchpad();
-                println!("Touchpad reconnected: {}", touchpad.name().unwrap_or("unknown"));
+                // udev が落ち着くのを少し待つ
+                thread::sleep(Duration::from_millis(500));
+
+                // タッチパッドの再接続を待つ（元と同じ名前を優先）
+                let (new_dev, new_path) = wait_for_touchpad(Some(&touchpad_name));
+                touchpad = new_dev;
+                touchpad_path = new_path;
+                println!(
+                    "Touchpad reconnected: {} ({})",
+                    touchpad.name().unwrap_or("unknown"),
+                    touchpad_path
+                );
 
                 // 寸法を再取得（接続し直しで変わる可能性は低いが念のため）
                 if let Some(d) = get_touchpad_dimensions(&touchpad) {
@@ -192,12 +202,13 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// タッチパッドが見つかるまで待機する
-fn wait_for_touchpad() -> evdev::Device {
+/// タッチパッドが見つかるまで待機する。
+/// `preferred_name` が与えられた場合、その名前のデバイスを優先する。
+fn wait_for_touchpad(preferred_name: Option<&str>) -> (evdev::Device, String) {
     let mut logged = false;
     loop {
-        match find_touchpad() {
-            Ok(dev) => return dev,
+        match find_touchpad_with_name(preferred_name) {
+            Ok((dev, path)) => return (dev, path),
             Err(e) => {
                 if !logged {
                     eprintln!("Waiting for touchpad: {}", e);

@@ -70,7 +70,13 @@ pub fn find_device(name_contains: &str) -> Result<Device, FindDeviceError> {
 }
 
 /// BTN_TOUCH対応のタッチパッドを自動検出
-pub fn find_touchpad() -> Result<Device, FindDeviceError> {
+///
+/// `preferred_name` が与えられた場合、その名前を含むデバイスを最優先で返す。
+/// 見つからなければ BTN_TOUCH + ABS_X/Y を持つ任意のデバイスを返す。
+/// 戻り値にはパス情報も含む（ログ用）。
+pub fn find_touchpad_with_name(preferred_name: Option<&str>) -> Result<(Device, String), FindDeviceError> {
+    let mut fallback: Option<(Device, String)> = None;
+
     for entry in fs::read_dir("/dev/input").map_err(|_| FindDeviceError::CannotReadInputDir)? {
         let entry = entry.map_err(|_| FindDeviceError::CannotReadInputDir)?;
         let path = entry.path();
@@ -79,35 +85,57 @@ pub fn find_touchpad() -> Result<Device, FindDeviceError> {
             continue;
         }
 
-        if let Ok(device) = Device::open(&path) {
-            // 自分自身の仮想デバイスを除外
-            if let Some(name) = device.name() {
-                if name.contains("way-thumbsense") {
-                    continue;
-                }
+        let device = match Device::open(&path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        // 自分自身の仮想デバイスを除外
+        if let Some(name) = device.name() {
+            if name.contains("way-thumbsense") {
+                continue;
             }
+        }
 
-            // BTN_TOUCHとABS_X/ABS_Yを持つデバイスのみ（実際のタッチパッド）
-            let has_btn_touch = device
-                .supported_keys()
-                .map(|keys| keys.contains(Key::BTN_TOUCH))
-                .unwrap_or(false);
+        // BTN_TOUCHとABS_X/ABS_Yを持つデバイスのみ（実際のタッチパッド）
+        let has_btn_touch = device
+            .supported_keys()
+            .map(|keys| keys.contains(Key::BTN_TOUCH))
+            .unwrap_or(false);
 
-            let has_abs_axes = device
-                .supported_absolute_axes()
-                .map(|axes| {
-                    axes.contains(AbsoluteAxisType::ABS_X)
-                        && axes.contains(AbsoluteAxisType::ABS_Y)
-                })
-                .unwrap_or(false);
+        let has_abs_axes = device
+            .supported_absolute_axes()
+            .map(|axes| {
+                axes.contains(AbsoluteAxisType::ABS_X)
+                    && axes.contains(AbsoluteAxisType::ABS_Y)
+            })
+            .unwrap_or(false);
 
-            if has_btn_touch && has_abs_axes {
-                return Ok(device);
+        if !(has_btn_touch && has_abs_axes) {
+            continue;
+        }
+
+        let path_str = path.to_string_lossy().into_owned();
+
+        // 名前一致ならその場で返す
+        if let (Some(preferred), Some(name)) = (preferred_name, device.name()) {
+            if name == preferred {
+                return Ok((device, path_str));
             }
+        }
+
+        // 名前一致でない場合は最初に見つかったものを fallback として保持
+        if fallback.is_none() {
+            fallback = Some((device, path_str));
         }
     }
 
-    Err(FindDeviceError::NotFound("touchpad with BTN_TOUCH".to_string()))
+    fallback.ok_or_else(|| FindDeviceError::NotFound("touchpad with BTN_TOUCH".to_string()))
+}
+
+/// 後方互換用: 名前を問わずタッチパッドを探す
+pub fn find_touchpad() -> Result<Device, FindDeviceError> {
+    find_touchpad_with_name(None).map(|(dev, _)| dev)
 }
 
 /// キーボードを自動検出（KEY_J対応デバイス）
