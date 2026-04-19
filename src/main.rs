@@ -5,6 +5,8 @@
 
 use clap::Parser;
 use evdev::{AbsoluteAxisType, InputEventKind, Key};
+use std::thread;
+use std::time::Duration;
 use way_thumbsense::input::{find_touchpad, get_touchpad_dimensions};
 use way_thumbsense::output::VirtualDevice;
 use way_thumbsense::tracker::{ExclusionZones, TouchTracker};
@@ -39,12 +41,12 @@ fn main() -> anyhow::Result<()> {
 
     println!("way-thumbsense starting...");
 
-    // タッチパッドを検出
-    let mut touchpad = find_touchpad()?;
+    // タッチパッドを検出（見つからなければリトライ）
+    let mut touchpad = wait_for_touchpad();
     println!("Touchpad: {}", touchpad.name().unwrap_or("unknown"));
 
     // タッチパッドの寸法を取得
-    let dimensions = get_touchpad_dimensions(&touchpad)
+    let mut dimensions = get_touchpad_dimensions(&touchpad)
         .ok_or_else(|| anyhow::anyhow!("Failed to get touchpad dimensions"))?;
     println!(
         "Touchpad dimensions: X({} to {}), Y({} to {})",
@@ -86,10 +88,11 @@ fn main() -> anyhow::Result<()> {
     let mut f24_active = false; // F24が実際に押されているか
 
     loop {
-        match touchpad.fetch_events() {
-            Ok(events) => {
-                // イベントをVecに集める
-                let events_vec: Vec<_> = events.collect();
+        let fetch_result = touchpad
+            .fetch_events()
+            .map(|events| events.collect::<Vec<_>>());
+        match fetch_result {
+            Ok(events_vec) => {
 
                 // 1st pass: 座標を更新
                 for ev in &events_vec {
@@ -155,11 +158,53 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             Err(e) => {
-                eprintln!("Touchpad error: {}", e);
-                break;
+                eprintln!("Touchpad error: {} — reconnecting...", e);
+
+                // 押しっぱなしのF24を解放
+                if f24_active {
+                    let _ = vdev.forward_key(Key::KEY_F24, 0);
+                    f24_active = false;
+                }
+                is_touching = false;
+                tracker.reset();
+
+                // タッチパッドの再接続を待つ
+                touchpad = wait_for_touchpad();
+                println!("Touchpad reconnected: {}", touchpad.name().unwrap_or("unknown"));
+
+                // 寸法を再取得（接続し直しで変わる可能性は低いが念のため）
+                if let Some(d) = get_touchpad_dimensions(&touchpad) {
+                    if d.min_x != dimensions.min_x
+                        || d.max_x != dimensions.max_x
+                        || d.min_y != dimensions.min_y
+                        || d.max_y != dimensions.max_y
+                    {
+                        dimensions = d;
+                        tracker = TouchTracker::new(dimensions, exclusion_zones);
+                        println!(
+                            "Touchpad dimensions updated: X({} to {}), Y({} to {})",
+                            dimensions.min_x, dimensions.max_x, dimensions.min_y, dimensions.max_y
+                        );
+                    }
+                }
             }
         }
     }
+}
 
-    Ok(())
+/// タッチパッドが見つかるまで待機する
+fn wait_for_touchpad() -> evdev::Device {
+    let mut logged = false;
+    loop {
+        match find_touchpad() {
+            Ok(dev) => return dev,
+            Err(e) => {
+                if !logged {
+                    eprintln!("Waiting for touchpad: {}", e);
+                    logged = true;
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
 }
