@@ -1,0 +1,16 @@
+[Unit]
+Description=ThumbSense for Linux/Wayland
+Documentation=https://github.com/nagamine-git/way-thumbsense
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/way-thumbsense
+Restart=on-failure
+RestartSec=2
+# Release F24 on stop so no key stays stuck if the service is killed mid-touch.
+KillSignal=SIGINT
+TimeoutStopSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross
+        run: |
+          cargo install cross --locked --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          mkdir -p dist/way-thumbsense-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/way-thumbsense \
+             dist/way-thumbsense-${{ matrix.target }}/
+          cp README.md ARCHITECTURE.md \
+             systemd/way-thumbsense.service \
+             dist/way-thumbsense-${{ matrix.target }}/
+          cat > dist/way-thumbsense-${{ matrix.target }}/99-uinput.rules <<'EOF'
+          KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+          EOF
+          cat > dist/way-thumbsense-${{ matrix.target }}/install.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          prefix="${PREFIX:-/usr/local}"
+          sudo install -Dm755 way-thumbsense "$prefix/bin/way-thumbsense"
+          sudo install -Dm644 99-uinput.rules /etc/udev/rules.d/99-uinput.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger
+          sudo usermod -aG input "$USER"
+          echo "Installed. Log out and back in for group changes to take effect."
+          EOF
+          chmod +x dist/way-thumbsense-${{ matrix.target }}/install.sh
+          tar -C dist -czf way-thumbsense-${{ matrix.target }}.tar.gz \
+              way-thumbsense-${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: way-thumbsense-${{ matrix.target }}
+          path: way-thumbsense-${{ matrix.target }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.tar.gz
+          generate_release_notes: true

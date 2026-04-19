@@ -66,6 +66,25 @@ src/
 cargo test
 ```
 
+## 配布
+
+- **Arch / AUR**: `paru -S way-thumbsense-git` (https://aur.archlinux.org/packages/way-thumbsense-git)
+- **その他 Linux (x86_64 / aarch64)**: [GitHub Releases](https://github.com/nagamine-git/way-thumbsense/releases) のプリビルド tarball (musl 静的リンク)。展開して `./install.sh`。
+- **Nix**: `nix run github:nagamine-git/way-thumbsense`
+
+## systemd user service
+
+AUR パッケージおよびプリビルド tarball には `way-thumbsense.service` (user unit) が含まれます。自動起動と落ちたときの再起動:
+
+```bash
+systemctl --user enable --now way-thumbsense.service
+```
+
+## macOS / Windows
+
+- macOS: 未対応。計画は [docs/platform-support.md](docs/platform-support.md) を参照。
+- Windows: 未対応。AutoHotkey で同等を実現するレシピが [docs/windows-ahk.md](docs/windows-ahk.md) にあります。
+
 ## ライセンス
 
 MIT
